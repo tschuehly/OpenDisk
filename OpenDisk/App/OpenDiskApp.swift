@@ -34,6 +34,14 @@ struct OpenDiskApp: App {
         .windowResizability(.contentSize)
         .commands {
             ToolbarCommands()
+            CommandGroup(after: .saveItem) {
+                Button("Export Scan as JSON…") {
+                    NotificationCenter.default.post(
+                        name: .exportOpenDiskScanJSON, object: nil
+                    )
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
             #if canImport(Sparkle)
             // Adds "Check for Updates…" under the app menu (direct build only).
             CommandGroup(after: .appInfo) {

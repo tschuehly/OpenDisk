@@ -29,7 +29,8 @@ struct DirectoryContents {
 enum DirectoryReadResult {
     case contents(DirectoryContents, device: dev_t)
     /// The directory lives on a device outside the scan's allowlist (mount
-    /// point or firmlink boundary) and must not be descended into.
+    /// point or firmlink boundary), or under an `OPENDISK_EXCLUDE` path,
+    /// and must not be descended into.
     case crossesDeviceBoundary
     /// The directory could not be opened or read.
     case unreadable
@@ -72,7 +73,20 @@ final class BulkDirectoryReader {
     /// Known limitation (shared with the previous engine): an unresponsive
     /// network mount point can block `open` in the kernel indefinitely;
     /// there is no portable timeout for that.
+    /// Absolute paths from the colon-separated `OPENDISK_EXCLUDE` variable.
+    /// Cloud-sync roots (File Provider: OneDrive, iCloud, ...) belong here:
+    /// every read inside them round-trips through `fileproviderd` and can
+    /// stall a whole-disk scan for many minutes.
+    static let excludedPaths: [String] = (ProcessInfo.processInfo
+        .environment["OPENDISK_EXCLUDE"] ?? "")
+        .split(separator: ":").map { String($0) }.filter { $0.hasPrefix("/") }
+
+    static func isExcluded(_ path: String) -> Bool {
+        excludedPaths.contains { path == $0 || path.hasPrefix($0 + "/") }
+    }
+
     func read(directoryAt path: String, allowedDevices: Set<dev_t>) -> DirectoryReadResult {
+        if Self.isExcluded(path) { return .crossesDeviceBoundary }
         let fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0 else { return .unreadable }
         defer { close(fd) }

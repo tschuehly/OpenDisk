@@ -2,6 +2,7 @@ import AppKit
 import QuickLook
 import QuickLookUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Analysis screen for one disk (pushed from the disk picker): scans it,
 /// streams results live, and hosts breadcrumb navigation through them —
@@ -27,6 +28,8 @@ struct DiskAnalysisView: View {
     @State private var searchText = ""
     @State private var searchPresented = false
     @State private var isShowingUnmountConfirmation = false
+    @State private var isExporting = false
+    @State private var exportErrorMessage: String?
     /// Multi-selection (shift-click ranges, ⌘-click toggles) across the
     /// visible list, keyed by path like everything else. A drag from any
     /// selected row carries the whole selection to the Collector.
@@ -172,6 +175,20 @@ struct DiskAnalysisView: View {
             scanAccess.beginAccess(toPath: rootPath)
             Task { await analyzer.scanDirectory(rootPath) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .exportOpenDiskScanJSON)) { _ in
+            exportScanJSON()
+        }
+        .alert(
+            "Export Failed",
+            isPresented: Binding(
+                get: { exportErrorMessage != nil },
+                set: { if !$0 { exportErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage ?? "The scan could not be exported.")
+        }
         .onDisappear {
             if let quickLookKeyMonitor {
                 NSEvent.removeMonitor(quickLookKeyMonitor)
@@ -232,6 +249,36 @@ struct DiskAnalysisView: View {
                 .disabled(!collector.canUndo || searchPresented)
                 .opacity(0)
                 .accessibilityHidden(true)
+        }
+    }
+
+    private func exportScanJSON() {
+        guard !isExporting, let snapshot = analyzer.exportSnapshot() else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "opendisk-scan.json"
+        panel.message = "File and folder names may contain sensitive information."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            isExporting = true
+            Task { @MainActor in
+                defer { isExporting = false }
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        try ScanJSONExporter.write(
+                            tree: snapshot.tree,
+                            unreadableDirectories: snapshot.reportedUnreadableDirectories,
+                            startedAt: snapshot.startedAt,
+                            finishedAt: snapshot.finishedAt,
+                            to: url
+                        )
+                    }.value
+                } catch {
+                    exportErrorMessage = error.localizedDescription
+                }
+            }
         }
     }
 

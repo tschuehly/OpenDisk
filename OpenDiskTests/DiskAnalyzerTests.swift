@@ -88,6 +88,60 @@ struct DiskAnalyzerTests {
         #expect(analyzer.rootItems.last?.itemCount == 1)
     }
 
+    @Test("exports only the accepted finished scan")
+    func exportSnapshotEligibility() async throws {
+        let analyzer = DiskAnalyzer(
+            scanner: FakeScanner(result: Self.makeResult(rootPath: "/Volumes/Test"))
+        )
+        #expect(analyzer.exportSnapshot() == nil)
+
+        await analyzer.scanDirectory("/Volumes/Test")
+
+        let snapshot = try #require(analyzer.exportSnapshot())
+        #expect(snapshot.tree.size(of: FileTree.rootID) == 2_050_000)
+        #expect(snapshot.reportedUnreadableDirectories == 0)
+        #expect(snapshot.finishedAt >= snapshot.startedAt)
+    }
+
+    @Test("does not export a partial scan")
+    func partialScanIsNotExportable() async {
+        var partial = FileTree(rootName: "/Volumes/Test")
+        partial.addNode(
+            name: "movie.mov", parent: FileTree.rootID,
+            size: 900_000, isDirectory: false
+        )
+        partial.rollUpDirectorySizes()
+
+        let scanner = GatedScanner(
+            partial: partial, final: Self.makeResult(rootPath: "/Volumes/Test")
+        )
+        let analyzer = DiskAnalyzer(scanner: scanner)
+
+        async let scanCompleted: Void = analyzer.scanDirectory("/Volumes/Test")
+        await waitUntil { analyzer.isScanning && analyzer.exportSnapshot() == nil }
+        #expect(analyzer.exportSnapshot() == nil)
+
+        scanner.release()
+        await scanCompleted
+        #expect(analyzer.exportSnapshot() != nil)
+    }
+
+    @Test("cancelling a scan clears export eligibility")
+    func cancelledScanIsNotExportable() async {
+        let scanner = GatedScanner(
+            partial: nil, final: Self.makeResult(rootPath: "/Volumes/Test")
+        )
+        let analyzer = DiskAnalyzer(scanner: scanner)
+
+        async let scanCompleted: Void = analyzer.scanDirectory("/Volumes/Test")
+        await waitUntil { analyzer.isScanning }
+        analyzer.cancelCurrentScan()
+        scanner.release()
+        await scanCompleted
+
+        #expect(analyzer.exportSnapshot() == nil)
+    }
+
     @Test("navigates into a directory and back from the completed tree")
     func navigationServesTreeSlices() async {
         let analyzer = DiskAnalyzer(

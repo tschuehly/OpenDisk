@@ -1,0 +1,64 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+
+REPO_DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/Library/Caches}/OpenDisk"
+BINARY="$CACHE_DIR/opendisk-scan"
+SWIFTC="${SWIFTC:-swiftc}"
+
+SOURCES=(
+  "$REPO_DIR/OpenDisk/Models/ScanProgress.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/DiskScanning.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/FileTree.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/IncrementalUpdater.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/ScanCache.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/ScanEngine.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/ScanMetrics.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/TraversalScanner.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/CatalogScanner.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/SystemInterop/BulkDirectoryReader.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/SystemInterop/FSEventsChangeJournal.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/SystemInterop/SearchFS.swift"
+  "$REPO_DIR/OpenDisk/Services/Scanning/SystemInterop/VolumeAttributes.swift"
+  "$REPO_DIR/OpenDisk/Utilities/PathHelpers.swift"
+  "$REPO_DIR/OpenDisk/Services/ScanJSONExporter.swift"
+  "$REPO_DIR/tools/opendisk-scan.swift"
+)
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: opendisk-scan PATH OUTPUT" >&2
+  exit 2
+fi
+
+for source in "${SOURCES[@]}"; do
+  [ -f "$source" ] || { echo "Missing source: $source" >&2; exit 1; }
+done
+
+needs_build=0
+if [ ! -x "$BINARY" ]; then
+  needs_build=1
+else
+  for source in "${SOURCES[@]}"; do
+    if [ "$source" -nt "$BINARY" ]; then
+      needs_build=1
+      break
+    fi
+  done
+fi
+
+if [ "$needs_build" -eq 1 ]; then
+  command -v "$SWIFTC" >/dev/null || {
+    echo "swiftc is required to build the OpenDisk scanner." >&2
+    exit 1
+  }
+  mkdir -p "$CACHE_DIR"
+  temporary="$BINARY.$$.tmp"
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  "$SWIFTC" -O -parse-as-library -o "$temporary" "${SOURCES[@]}"
+  mv "$temporary" "$BINARY"
+  trap - EXIT HUP INT TERM
+fi
+
+exec "$BINARY" "$@"

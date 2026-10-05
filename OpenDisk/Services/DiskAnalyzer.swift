@@ -87,6 +87,9 @@ final class DiskAnalyzer {
     /// breadcrumb trail in sync by observing it.
     private(set) var currentPath = ""
     private var scanTask: Task<ScanResult, Never>?
+    /// Set only after the accepted scan generation returns its final tree.
+    /// Partial, cancelled and superseded scans remain ineligible for export.
+    private var scanFinishedAt: Date?
     /// Bumped per scan. Scan events hop to the main actor asynchronously,
     /// so every event carries the generation it belongs to and stale ones
     /// are dropped.
@@ -114,6 +117,22 @@ final class DiskAnalyzer {
         self.scanner = scanner
     }
 
+    /// Captures the latest accepted finished scan for an off-main export.
+    /// Relative paths are applied by `ScanJSONExporter`, so the absolute
+    /// scan root never needs to leave this view model.
+    func exportSnapshot() -> ScanExportSnapshot? {
+        guard !isScanning, !resultIsPartial,
+              let result = scanResult,
+              let startedAt = scanStartDate,
+              let finishedAt = scanFinishedAt else { return nil }
+        return ScanExportSnapshot(
+            tree: result.tree,
+            startedAt: startedAt,
+            finishedAt: finishedAt,
+            reportedUnreadableDirectories: result.unreadableDirectories
+        )
+    }
+
     // MARK: - Scanning
 
     /// Scans `path` and shows its contents, streaming results as they are
@@ -122,6 +141,9 @@ final class DiskAnalyzer {
         cancelCurrentScan()
         generation &+= 1
         let generation = self.generation
+        // Clear export eligibility before every scan attempt, including an
+        // early Full Disk Access refusal.
+        scanFinishedAt = nil
 
         // Full Disk Access is the non-sandboxed build's mechanism. The
         // sandboxed (App Store) build scans "/" through a security-scoped
@@ -207,6 +229,7 @@ final class DiskAnalyzer {
         scanDuration = Date().timeIntervalSince(startDate)
         isScanning = false
         unreadableDirectories = result.unreadableDirectories
+        scanFinishedAt = Date()
         // A cache-splice scan's live counters only covered the changed
         // directories; the finished tree is the truth for the status bar.
         totalDiskScannedBytes = result.tree.size(of: FileTree.rootID)
@@ -219,6 +242,8 @@ final class DiskAnalyzer {
 
     /// Cancels a scan in flight, if any.
     func cancelCurrentScan() {
+        guard scanTask != nil else { return }
+        scanFinishedAt = nil
         scanTask?.cancel()
         scanTask = nil
     }

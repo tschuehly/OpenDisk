@@ -83,6 +83,25 @@ xcodebuild -project "OpenDisk.xcodeproj" -scheme "OpenDisk" build
 2. Pick a drive, or choose **Scan Folder…** to analyze any directory.
 3. Explore the sunburst — hover a slice for its exact size, click to zoom in, and use the breadcrumbs or folder list to step back out.
 4. Open **Purgeable Space** to see caches and other reclaimable storage broken down.
+5. After a scan finishes, choose **File → Export Scan as JSON…** to save the complete scan for analysis by scripts or AI agents.
+
+### AI-agent export
+
+The export is a versioned `opendisk.scan` JSON document with relative paths and a flat `nodes` array linked by `id` and `parentId`. Byte values are exact decimal strings, directory sizes include descendants, and the root is named `.` so the absolute scan path is not included. The export is best-effort: `reportedUnreadableDirectories` records scanner-reported read failures, but a zero value does not prove complete coverage. File and folder names may still contain sensitive information.
+
+For a headless scan, the CLI wrapper reuses OpenDisk's scanner and caches its compiled helper:
+
+```sh
+tools/opendisk-scan / ~/Documents/opendisk-scan.json
+```
+
+For a read-only cleanup report, use DuckDB:
+
+```sh
+tools/opendisk-cleanup.sh ~/Documents/opendisk-scan.json ~/Documents/opendisk-cleanup.json
+```
+
+The report is `opendisk.cleanup` v1. It groups file-level candidates into path-based findings with reclaimable bytes, confidence, risk, owning-tool actions, and representative paths. It never deletes anything; review every recommendation, and do not add directory totals to file totals.
 
 ## How it works
 
